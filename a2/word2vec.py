@@ -18,7 +18,7 @@ def sigmoid(x):
     """
 
     ### YOUR CODE HERE (~1 Line)
-
+    s = 1.0 / (1.0 + np.exp(x))
     ### END YOUR CODE
 
     return s
@@ -64,7 +64,7 @@ def naiveSoftmaxLossAndGradient(
     ### Please use the provided softmax function (imported earlier in this file)
     ### This numerically stable implementation helps you avoid issues pertaining
     ### to integer overflow. 
-
+    softmax()
     ### END YOUR CODE
 
     return loss, gradCenterVec, gradOutsideVecs
