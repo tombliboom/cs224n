@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+import os
 import random
 import numpy as np
 from utils.treebank import StanfordSentiment
@@ -18,7 +19,7 @@ assert sys.version_info[1] >= 5
 
 # Reset the random seed to make sure that everyone gets the same results
 random.seed(314)
-dataset = StanfordSentiment()
+dataset = StanfordSentiment(os.path.join(os.getcwd(), 'a2/utils/datasets/stanfordSentimentTreebank'))
 tokens = dataset.tokens()
 nWords = len(tokens)
 

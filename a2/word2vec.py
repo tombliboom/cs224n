@@ -18,7 +18,7 @@ def sigmoid(x):
     """
 
     ### YOUR CODE HERE (~1 Line)
-    s = 1.0 / (1.0 + np.exp(x))
+    s = 1.0 / (1.0 + np.exp(-x))
     ### END YOUR CODE
 
     return s
@@ -64,7 +64,20 @@ def naiveSoftmaxLossAndGradient(
     ### Please use the provided softmax function (imported earlier in this file)
     ### This numerically stable implementation helps you avoid issues pertaining
     ### to integer overflow. 
-    softmax()
+
+    prob = softmax(np.dot(outsideVectors, centerWordVec))
+    loss = - np.log(prob[outsideWordIdx])
+    gradCenterVec = np.zeros_like(centerWordVec) # [vector_length, ]
+    gradOutsideVecs = np.zeros_like(outsideVectors) # [num_words, vector_length]
+    # gradients of similarity part - dL/dSoftmax * dSoftmax/dSimilarity
+    dLds = prob # [num_words, ] - 1D
+    # The gradients of positive samples should minus one
+    dLds[outsideWordIdx] -= 1.0  
+    # dL/dcenter = dL/dSimilarity * dSimilarity/dcenter
+    gradCenterVec = np.dot(dLds, outsideVectors)
+    # outer product [m, ] [n, ] -> [m, n]
+    gradOutsideVecs = np.outer(dLds, centerWordVec)
+
     ### END YOUR CODE
 
     return loss, gradCenterVec, gradOutsideVecs
@@ -111,6 +124,28 @@ def negSamplingLossAndGradient(
     ### YOUR CODE HERE (~10 Lines)
 
     ### Please use your implementation of sigmoid in here.
+    loss, gradCenterVec, gradOutsideVecs = None, None, None
+    negative_samples = outsideVectors[negSampleWordIndices] #[k, vector_length]
+    positive_samples = outsideVectors[outsideWordIdx] # [context_size, vector_length]
+    
+    pos_sigmoid = sigmoid(np.dot(positive_samples, centerWordVec))  # [num_words, vector_length] x [vector_length, 1] -> [num_words, 1]
+    neg_sigmoid = sigmoid(-np.dot(negative_samples, centerWordVec)) # [num_negative_samples, 1]
+    loss = - np.log(pos_sigmoid) - np.sum(np.log(neg_sigmoid), axis=0)
+    
+    gradCenterVec = np.zeros_like(centerWordVec)
+    gradOutsideVecs = np.zeros_like(outsideVectors)
+
+    
+    gradCenterVec_pos = np.dot((1.0 - sigmoid(np.dot(centerWordVec, positive_samples.T))), positive_samples)
+    gradCenterVec_neg = np.zeros_like(centerWordVec)
+    gradCenterVec_neg += np.dot((1.0 - sigmoid(-np.dot(centerWordVec, negative_samples.T))), negative_samples)
+    gradCenterVec = - gradCenterVec_pos + gradCenterVec_neg
+
+    gradOutsideVecs[outsideWordIdx] = - np.dot((1.0 - sigmoid(np.dot(centerWordVec, positive_samples.T))), centerWordVec)
+    temp_neg, temp_center = (1.0 - sigmoid(np.dot(-centerWordVec, negative_samples.T))).reshape(-1, 1), centerWordVec.reshape(1, -1)
+    grads = np.dot(temp_neg, temp_center)
+    for idx, grad in zip(negSampleWordIndices, grads):
+        gradOutsideVecs[idx] += grad
 
     ### END YOUR CODE
 
@@ -157,9 +192,17 @@ def skipgram(currentCenterWord, windowSize, outsideWords, word2Ind,
     gradOutsideVectors = np.zeros(outsideVectors.shape)
 
     ### YOUR CODE HERE (~8 Lines)
-
+    centerWordVec = centerWordVectors[word2Ind[currentCenterWord]]
+    for outsideWord in outsideWords:
+        # window word
+        # centerWordVec, outsideWordIdx, outsideVectors, dataset
+        outsideWordIdx = word2Ind[outsideWord]
+        centerWordIdx = word2Ind[currentCenterWord]
+        l, grad_c, grad_o = word2vecLossAndGradient(centerWordVec, outsideWordIdx, outsideVectors, dataset)
+        loss += l
+        gradCenterVecs[centerWordIdx] += grad_c
+        gradOutsideVectors += grad_o
     ### END YOUR CODE
-    
     return loss, gradCenterVecs, gradOutsideVectors
 
 
@@ -277,7 +320,7 @@ def test_word2vec():
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Test your implementations.')
-    parser.add_argument('function', nargs='?', type=str, default='all',
+    parser.add_argument('function', nargs='?', type=str, default='skipgram',
                         help='Name of the function you would like to test.')
 
     args = parser.parse_args()
