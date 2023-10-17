@@ -19,7 +19,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import nltk
 import sentencepiece as spm
-nltk.download('punkt')
+
+from nltk import data
+data.path.append(r"F:\Projects\PythonProjects\cs224n\nltk_data")
+# nltk.download('punkt')
+from nltk.tokenize import punkt
 
 
 def pad_sents(sents, pad_token):
@@ -35,7 +39,11 @@ def pad_sents(sents, pad_token):
     sents_padded = []
 
     ### YOUR CODE HERE (~6 Lines)
-
+    max_len = max([len(sent) for sent in sents])
+    for sent in sents:
+        pads = [pad_token for _ in range(max_len - len(sent))]
+        sents_padded.append(sent + pads)
+        
 
     ### END YOUR CODE
 

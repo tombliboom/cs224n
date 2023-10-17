@@ -82,6 +82,20 @@ class NMT(nn.Module):
         ###         https://pytorch.org/docs/stable/nn.html#torch.nn.Dropout
         ###     Conv1D Layer:
         ###         https://pytorch.org/docs/stable/generated/torch.nn.Conv1d.html
+        # ??? padding='same'  Wasting my whole afternoon!!! 
+        # keep feature map the same as the input 
+        self.post_embed_cnn = nn.Conv1d(kernel_size=2, in_channels=embed_size, out_channels=embed_size, padding='same')
+        self.encoder = nn.LSTM(input_size=embed_size, hidden_size=self.hidden_size, bidirectional=True)
+        self.decoder = nn.LSTMCell(input_size=embed_size+self.hidden_size, hidden_size=self.hidden_size)
+
+        # projection from output of encoder to decoder
+        self.h_projection = nn.Linear(in_features=2 * self.hidden_size, out_features=self.hidden_size, bias=False)
+        self.c_projection = nn.Linear(in_features=2 * self.hidden_size, out_features=self.hidden_size, bias=False)
+        self.att_projection = nn.Linear(in_features=2 * self.hidden_size, out_features=self.hidden_size, bias=False)
+        
+        self.combined_output_projection = nn.Linear(in_features=self.hidden_size*3, out_features=self.hidden_size, bias=False)
+        self.target_vocab_projection = nn.Linear(in_features=self.hidden_size, out_features=len(vocab.tgt), bias=False)
+        self.dropout = nn.Dropout(p=dropout_rate)
 
         ### END YOUR CODE
 
@@ -179,7 +193,30 @@ class NMT(nn.Module):
         ###     Tensor Reshape (a possible alternative to permute):
         ###         https://pytorch.org/docs/stable/generated/torch.Tensor.reshape.html
 
+        # word2vec
+        # [src_len, b] -> [src_len, b, e]
+        X = self.model_embeddings.source(source_padded)
+        
+        # dimension transformation
+        # [src_len, b, e] -> [b, e, src_len]
+        X = X.permute(1, 2, 0)
+        
+        # conv1d
+        X = self.post_embed_cnn(X)
+        
+        # [b, e, src_len] -> [src_len, b, e]
+        X = X.permute(2, 0, 1)
 
+        # encoder 
+        # Only calculate the unpadded part
+        packed_X = torch.nn.utils.rnn.pack_padded_sequence(X, lengths=source_lengths)
+        enc_hiddens, (last_hidden, last_cell) = self.encoder(packed_X)
+        # [src_len, b, h*2]
+        enc_hiddens, _ = torch.nn.utils.rnn.pad_packed_sequence(enc_hiddens, batch_first=True)
+        # enc_hiddens = enc_hiddens.permute(1, 0, 2)
+        init_decoder_hidden = self.h_projection(torch.cat((last_hidden[0], last_hidden[1]), dim=1))
+        init_decoder_cell = self.c_projection(torch.cat((last_cell[0], last_cell[1]), dim=1))
+        dec_init_state = (init_decoder_hidden, init_decoder_cell)
         ### END YOUR CODE
 
         return enc_hiddens, dec_init_state
@@ -247,9 +284,17 @@ class NMT(nn.Module):
         ###         https://pytorch.org/docs/stable/torch.html#torch.cat
         ###     Tensor Stacking:
         ###         https://pytorch.org/docs/stable/torch.html#torch.stack
+        enc_hiddens_proj = self.att_projection(enc_hiddens)
+        Y = self.model_embeddings.target(target_padded)
+        # Y shape - [time-steps, batch-size, embedding-dims]
+        for Y_t in torch.split(Y, 1):
+            Y_t = Y_t.squeeze(0) #[1, b, e] -> [b, e]
+            Ybar_t = torch.cat((Y_t, o_prev), dim=1)
+            dec_state, combined_output, _ = self.step(Ybar_t, dec_state, enc_hiddens, enc_hiddens_proj, enc_masks)
+            combined_outputs.append(combined_output)
+            o_prev = combined_output
 
-
-
+        combined_outputs = torch.stack(combined_outputs)
         ### END YOUR CODE
 
         return combined_outputs
@@ -305,8 +350,14 @@ class NMT(nn.Module):
         ###         https://pytorch.org/docs/stable/torch.html#torch.unsqueeze
         ###     Tensor Squeeze:
         ###         https://pytorch.org/docs/stable/torch.html#torch.squeeze
-
-
+        dec_state = self.decoder(Ybar_t, dec_state)
+        dec_hidden, dec_cell = dec_state
+        # enc_hiddens [batch-size, src_len, hidden-size]
+        # dec_hidden shape [batch, hidden-size, 1]
+        dec_hidden = dec_hidden.unsqueeze(2)
+        e_t = torch.bmm(enc_hiddens_proj, dec_hidden) # attention scores
+        e_t = e_t.squeeze(2)
+        # enc_mask的作用就是标记语句的填充部分，从而赋一个很大的负值，从而在Softmax时<pad>得到的概率就很低
         ### END YOUR CODE
 
         # Set e_t to -inf where enc_masks has 1
@@ -340,8 +391,14 @@ class NMT(nn.Module):
         ###         https://pytorch.org/docs/stable/torch.html#torch.cat
         ###     Tanh:
         ###         https://pytorch.org/docs/stable/torch.html#torch.tanh
-
-
+        alpha_t = torch.nn.functional.softmax(e_t) # attention weights [b, src_len]
+        alpha_t = alpha_t.unsqueeze(1) # [b, src_len] -> [b, 1, src_len]
+        a_t = torch.bmm(alpha_t, enc_hiddens) # attention output [b, 1, 2 * hidden-size]
+        a_t = a_t.view(alpha_t.shape[0], -1) # [b, 1, 2 * hidden-size] -> [b, 2 * hidden-size]
+        dec_hidden = dec_hidden.squeeze(2)
+        U_t = torch.cat([a_t, dec_hidden], dim=1)
+        V_t = self.combined_output_projection(U_t)
+        O_t = self.dropout(torch.tanh(V_t))
         ### END YOUR CODE
 
         combined_output = O_t
