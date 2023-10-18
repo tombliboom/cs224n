@@ -168,7 +168,28 @@ class CharCorruptionDataset(Dataset):
 
     def __getitem__(self, idx):
         # TODO [part e]: see spec above
-        raise NotImplementedError
+        # raise NotImplementedError        
+        # Randomly truncate the document to a length no less than 4 characters, and no more than int(self.block_size*7/8) characters.
+        document = self.data[idx]
+        min_length = min(len(document), 4)
+        max_length = min(len(document), int(self.block_size*7/8))
+        length = random.randint(min_length, max_length)
+        # truncated length
+        document = document[:length]
+        start = random.randint(0, int(length/2))
+        mask_length = random.randint(0, int(length/2))
+        end = start + mask_length
+        prefix = document[0:start]
+        masked_content = document[start:end]
+        suffix = document[end:]
+        assert (prefix + masked_content + suffix) == document
+        masked_string = prefix + self.MASK_CHAR + suffix + self.MASK_CHAR + masked_content
+        masked_string = masked_string + self.PAD_CHAR * (self.block_size - len(masked_string))
+        x = masked_string[:-1]
+        y = masked_string[1:]
+        x = torch.tensor([self.stoi[c] for c in x], dtype=torch.long)
+        y = torch.tensor([self.stoi[c] for c in y], dtype=torch.long)
+        return x, y
 
 """
 Code under here is strictly for your debugging purposes; feel free to modify
